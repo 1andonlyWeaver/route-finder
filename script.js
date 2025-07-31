@@ -224,8 +224,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (const node of nodesArray) {
             const x = Math.min(SPATIAL_INDEX_GRID_SIZE - 1, Math.floor((node.lat - minLat) / latCellSize));
-            const y = Math.min(SPATIAL_INDEX_GRID_SIZE - 1, Math.floor((node.lon - minLon) / lonCellSize));
-            grid[x * SPATIAL_INDEX_GRID_SIZE + y].push(node);
+                        const y = Math.min(SPATIAL_INDEX_GRID_SIZE - 1, Math.floor((node.lon - minLon) / lonCellSize));
+            const gridIndex = x * SPATIAL_INDEX_GRID_SIZE + y;
+            if (grid[gridIndex]) {
+                grid[gridIndex].push(node);
+            }
         }
 
         return {
@@ -313,7 +316,11 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function cleanupMap(clearAll = true) {
          if (animationCanvasLayer) {
-            animationCanvasLayer.onRemove(map);
+            try {
+                map.removeLayer(animationCanvasLayer);
+            } catch (error) {
+                console.warn("Error removing canvas layer:", error);
+            }
             animationCanvasLayer = null;
         }
          if(clearAll) {
@@ -325,76 +332,119 @@ document.addEventListener('DOMContentLoaded', () => {
          }
     }
 
+            let activeAnimationInterval = null;
+
+    function stopAnimation() {
+        if (activeAnimationInterval) {
+            clearInterval(activeAnimationInterval);
+            activeAnimationInterval = null;
+        }
+    }
+
     async function playAnimation(log) {
+        stopAnimation(); 
         cleanupMap(false);
 
+        // Check if animation log is empty
+        if (!log || log.length === 0) {
+            console.warn("Animation log is empty, skipping animation");
+            return Promise.resolve();
+        }
+
         const allSegments = log.flatMap(batch => batch.map(segment => [
-            [segment.from.lat, segment.from.lon], 
+            [segment.from.lat, segment.from.lon],
             [segment.to.lat, segment.to.lon]
         ]));
-        
+
+        // Check if segments were created successfully
+        if (allSegments.length === 0) {
+            console.warn("No animation segments found, skipping animation");
+            return Promise.resolve();
+        }
+
         const speedValue = parseInt(animationSpeedSlider.value, 10);
-        const maxFrames = 200; 
-        const minFrames = 20;  
-        const frames = Math.round(minFrames + ((maxFrames - minFrames) * (10 - speedValue) / 9));
-        const totalDuration = frames * 16.67; // approx 60fps
-        
-        let startTime = null;
-        let exploredSegments = [];
+
+        const minDelay = 8;
+        const maxDelay = 200;
+        const delay = Math.round(minDelay + ((maxDelay - minDelay) * (10 - speedValue) / 9));
+
+        const minSegmentsPerTick = 5;
+        const maxSegmentsPerTick = Math.max(500, Math.ceil(allSegments.length / 10)); 
+        const segmentsPerTick = Math.round(minSegmentsPerTick + ((maxSegmentsPerTick - minSegmentsPerTick) * (speedValue - 1) / 9));
+
+        let currentIndex = 0;
 
         animationCanvasLayer = L.canvasLayer({
             render: function(ctx, info) {
-                if (!startTime) startTime = performance.now();
-                const elapsedTime = performance.now() - startTime;
-                const progress = Math.min(elapsedTime / totalDuration, 1);
+                try {
+                    ctx.clearRect(0, 0, info.size.x, info.size.y);
+                    
+                    // Draw explored paths (red)
+                    ctx.strokeStyle = 'rgba(220, 38, 38, 0.6)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    for (let i = 0; i < currentIndex; i++) {
+                        const segment = allSegments[i];
+                        if (segment && segment.length === 2) {
+                            const p1 = info.map.latLngToContainerPoint(segment[0]);
+                            const p2 = info.map.latLngToContainerPoint(segment[1]);
+                            if (p1 && p2 && !isNaN(p1.x) && !isNaN(p1.y) && !isNaN(p2.x) && !isNaN(p2.y)) {
+                                ctx.moveTo(p1.x, p1.y);
+                                ctx.lineTo(p2.x, p2.y);
+                            }
+                        }
+                    }
+                    ctx.stroke();
 
-                const segmentsToShow = Math.floor(progress * allSegments.length);
-
-                ctx.clearRect(0, 0, info.size.x, info.size.y);
-                
-                // Draw explored (red)
-                ctx.strokeStyle = 'rgba(220, 38, 38, 0.6)'; // #dc2626
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                for (let i = 0; i < segmentsToShow; i++) {
-                    const segment = allSegments[i];
-                    const p1 = info.map.latLngToContainerPoint(segment[0]);
-                    const p2 = info.map.latLngToContainerPoint(segment[1]);
-                    ctx.moveTo(p1.x, p1.y);
-                    ctx.lineTo(p2.x, p2.y);
-                }
-                ctx.stroke();
-
-                // Draw frontier (orange)
-                const frontierStart = Math.max(0, segmentsToShow - 50); // Show last 50 as frontier
-                ctx.strokeStyle = 'rgba(249, 115, 22, 0.8)'; // #f97316
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                 for (let i = frontierStart; i < segmentsToShow; i++) {
-                    const segment = allSegments[i];
-                    const p1 = info.map.latLngToContainerPoint(segment[0]);
-                    const p2 = info.map.latLngToContainerPoint(segment[1]);
-                    ctx.moveTo(p1.x, p1.y);
-                    ctx.lineTo(p2.x, p2.y);
-                }
-                ctx.stroke();
-
-                if (progress < 1) {
-                    requestAnimationFrame(() => animationCanvasLayer._update());
+                    // Draw frontier (orange)
+                    const frontierStart = Math.max(0, currentIndex - segmentsPerTick);
+                    ctx.strokeStyle = 'rgba(249, 115, 22, 0.8)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    for (let i = frontierStart; i < currentIndex; i++) {
+                         const segment = allSegments[i];
+                         if (segment && segment.length === 2) {
+                            const p1 = info.map.latLngToContainerPoint(segment[0]);
+                            const p2 = info.map.latLngToContainerPoint(segment[1]);
+                            if (p1 && p2 && !isNaN(p1.x) && !isNaN(p1.y) && !isNaN(p2.x) && !isNaN(p2.y)) {
+                                ctx.moveTo(p1.x, p1.y);
+                                ctx.lineTo(p2.x, p2.y);
+                            }
+                         }
+                    }
+                    ctx.stroke();
+                } catch (error) {
+                    console.error("Error during canvas rendering:", error);
                 }
             }
         }).addTo(map);
 
         return new Promise(resolve => {
-            const checkCompletion = () => {
-                const elapsedTime = performance.now() - (startTime || performance.now());
-                if (elapsedTime >= totalDuration) {
+            activeAnimationInterval = setInterval(() => {
+                try {
+                    if (currentIndex >= allSegments.length) {
+                        stopAnimation();
+                        // Force a final canvas update
+                        if (animationCanvasLayer && animationCanvasLayer._renderer) {
+                            animationCanvasLayer._update();
+                        }
+                        resolve();
+                        return;
+                    }
+                    
+                    currentIndex = Math.min(currentIndex + segmentsPerTick, allSegments.length);
+                    
+                    // Trigger canvas update
+                    if (animationCanvasLayer && animationCanvasLayer._renderer) {
+                        animationCanvasLayer._update();
+                    }
+                } catch (error) {
+                    console.error("Error during animation interval:", error);
+                    stopAnimation();
                     resolve();
-                } else {
-                    requestAnimationFrame(checkCompletion);
                 }
-            };
-            checkCompletion();
+
+            }, delay);
         });
     }
 
@@ -466,13 +516,17 @@ document.addEventListener('DOMContentLoaded', () => {
             
             aStarWorker.onerror = (e) => reject(new Error(`Error in A* Worker: ${e.message}`));
 
-            const graphData = Array.from(graph.entries()).map(([id, node]) => [id, { ...node, parent: null }]);
+            const graphData = Array.from(graph.entries()).map(([id, node]) => {
+                const adj = Array.from(node.adj.entries());
+                return [id, { ...node, adj }];
+            });
             aStarWorker.postMessage({ graphData, startNodeId: startNode.id, endNodeId: endNode.id, mode: routingMode, MAX_SPEED_MS });
         });
     }
 
-    async function handleFindRoute() {
+        async function handleFindRoute() {
         if(isReplaying) return;
+        stopAnimation();
         cleanupMap();
         setLoading(true);
         routeInfoPanel.classList.add('hidden');
@@ -507,7 +561,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             setLoading(false);
-            replayBtn.classList.remove('hidden');
+            // Only show replay button if we have animation data
+            if (animationLog && animationLog.length > 0) {
+                replayBtn.classList.remove('hidden');
+                console.log("Replay button enabled with", animationLog.length, "animation batches");
+            } else {
+                console.warn("No animation data available for replay");
+            }
             if (aStarWorker) { aStarWorker.terminate(); aStarWorker = null; }
 
         } catch (error) {
@@ -519,27 +579,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleReplay() {
-        if(isReplaying || animationLog.length === 0) return;
+        if(isReplaying || animationLog.length === 0) {
+            console.warn("Cannot replay: already replaying or no animation log available");
+            return;
+        }
+        
+        console.log("Starting replay with", animationLog.length, "animation batches");
         isReplaying = true;
         
         updateStatus("Replaying search...");
         findRouteBtn.disabled = true;
         replayBtn.disabled = true;
 
-        await playAnimation(animationLog);
+        try {
+            await playAnimation(animationLog);
 
-        if (lastFinalPathCoords.length > 0) {
-            finalPathLayer = L.polyline(lastFinalPathCoords, { color: '#facc15', weight: 6, opacity: 1, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+            // Redraw the final path after animation completes
+            if (lastFinalPathCoords.length > 0) {
+                if (finalPathLayer) map.removeLayer(finalPathLayer);
+                finalPathLayer = L.polyline(lastFinalPathCoords, { 
+                    color: '#facc15', 
+                    weight: 6, 
+                    opacity: 1, 
+                    lineCap: 'round', 
+                    lineJoin: 'round' 
+                }).addTo(map);
+                console.log("Final path redrawn");
+            }
+            
+            updateStatus("Replay complete!");
+        } catch (error) {
+            console.error("Error during replay:", error);
+            updateStatus("Replay failed. Please try again.", true);
+        } finally {
+            isReplaying = false;
+            findRouteBtn.disabled = false;
+            replayBtn.disabled = false;
         }
-        
-        updateStatus("Replay complete!");
-        isReplaying = false;
-        findRouteBtn.disabled = false;
-        replayBtn.disabled = false;
     }
 
-    cancelBtn.addEventListener('click', () => {
+        cancelBtn.addEventListener('click', () => {
         if (aStarWorker) { aStarWorker.terminate(); aStarWorker = null; }
+        stopAnimation();
         setLoading(false);
         replayBtn.classList.add('hidden');
         updateStatus("Search cancelled. Ready for new route.");

@@ -26,7 +26,9 @@ function haversineDistance(c1, c2) {
 self.onmessage = function(e) {
     const { graphData, startNodeId, endNodeId, mode, MAX_SPEED_MS } = e.data;
     
-    const graph = new Map(graphData);
+    const graph = new Map(graphData.map(([id, node]) => {
+        return [id, { ...node, adj: new Map(node.adj) }];
+    }));
     const startNode = graph.get(startNodeId);
     const endNode = graph.get(endNodeId);
     
