@@ -602,7 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (nodeA && nodeB) {
                     const distance = haversineDistance(nodeA, nodeB);
                     const stopPenalty = getStopPenalty(nodeB);
-                    const time = (distance / speedMs) + stopPenalty;
+                    const time = (distance / speedMs) * congestionFactor + stopPenalty;
                     const cost = { time, distance };
                     
                     if (isReversed) {
