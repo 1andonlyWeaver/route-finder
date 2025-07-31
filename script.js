@@ -365,10 +365,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateStatus(message, isError = false) { statusPanel.innerHTML = message; statusPanel.className = `mt-2 text-sm p-3 rounded-lg min-h-[120px] ${isError ? 'bg-red-900/50 text-red-300' : 'bg-gray-800 text-gray-400'}`; }
     function setLoading(isLoading) {
+        const spinner = document.getElementById('spinner');
+        const btnText = document.getElementById('btn-text');
+
         findRouteBtn.disabled = isLoading;
-        replayBtn.classList.add('hidden');
-        findRouteBtn.classList.toggle('hidden', isLoading);
+        spinner.classList.toggle('hidden', !isLoading);
+        btnText.classList.toggle('hidden', isLoading);
         cancelBtn.classList.toggle('hidden', !isLoading);
+
+        if(isLoading) {
+            findRouteBtn.classList.add('w-1/2');
+            findRouteBtn.classList.remove('w-full');
+            cancelBtn.classList.add('w-1/2');
+            cancelBtn.classList.remove('w-full');
+        } else {
+            findRouteBtn.classList.add('w-full');
+            findRouteBtn.classList.remove('w-1/2');
+            cancelBtn.classList.add('w-full');
+            cancelBtn.classList.remove('w-1/2');
+        }
     }
     function haversineDistance(c1, c2) { const R=6371e3,p1=c1.lat*Math.PI/180,p2=c2.lat*Math.PI/180,dp=(c2.lat-c1.lat)*Math.PI/180,dl=(c2.lon-c1.lon)*Math.PI/180,a=Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)) }
 
