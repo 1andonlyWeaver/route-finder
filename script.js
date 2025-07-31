@@ -551,10 +551,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function getStopPenalty(node) {
+        if (!node.tags) return 0;
+
+        const timePenalty = (stop) => {
+            switch (stop) {
+                case 'traffic_signals': return 20; 
+                case 'stop': return 10;
+                default: return 0;
+            }
+        };
+
+        return timePenalty(node.tags.highway);
+    }
+
     function buildGraph(osmData) {
         updateStatus("Building road graph...");
         const nodes = new Map();
-        osmData.elements.filter(e => e.type === 'node').forEach(node => { nodes.set(node.id, { id: node.id, lat: node.lat, lon: node.lon, adj: new Map() }); });
+        osmData.elements.filter(e => e.type === 'node').forEach(node => { 
+            const n = { id: node.id, lat: node.lat, lon: node.lon, adj: new Map(), tags: node.tags };
+            nodes.set(node.id, n);
+        });
         
         osmData.elements.filter(e => e.type === 'way').forEach(way => {
             const roadType = way.tags.highway || 'default';
@@ -584,7 +601,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const nodeB = nodes.get(way.nodes[i+1]);
                 if (nodeA && nodeB) {
                     const distance = haversineDistance(nodeA, nodeB);
-                    const time = (distance / speedMs) * congestionFactor;
+                    const stopPenalty = getStopPenalty(nodeB);
+                    const time = (distance / speedMs) + stopPenalty;
                     const cost = { time, distance };
                     
                     if (isReversed) {
