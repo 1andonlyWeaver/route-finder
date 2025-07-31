@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-World A* Routing Visualizer (LOD)</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="canvas-layer.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        #map { height: 100%; width: 100%; border-radius: 0.5rem; z-index: 1; background-color: #111827; }
+        .leaflet-control-zoom-in, .leaflet-control-zoom-out { background-color: #1f2937 !important; color: white !important; }
+        .leaflet-control-zoom-in:hover, .leaflet-control-zoom-out:hover { background-color: #374151 !important; }
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            width: 1rem;
+            height: 1rem;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .radio-label {
+            cursor: pointer; padding: 0.5rem 1rem; border-radius: 0.375rem;
+            transition: background-color 0.2s, color 0.2s;
+            background-color: #374151; color: #d1d5db;
+        }
+        input[type="radio"]:checked + .radio-label {
+            background-color: #2563eb; color: white; font-weight: 600;
+        }
+        /* Custom styles for range slider */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+            cursor: pointer;
+            width: 100%;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            background: #374151;
+            height: 0.5rem;
+            border-radius: 0.25rem;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            margin-top: -4px;
+            background-color: #2563eb;
+            height: 1.25rem;
+            width: 1.25rem;
+            border-radius: 50%;
+            border: 2px solid #fff;
+        }
+         input[type=range]::-moz-range-track {
+            background: #374151;
+            height: 0.5rem;
+            border-radius: 0.25rem;
+        }
+        input[type=range]::-moz-range-thumb {
+            background-color: #2563eb;
+            height: 1.25rem;
+            width: 1.25rem;
+            border-radius: 50%;
+            border: 2px solid #fff;
+        }
+    </style>
+</head>
+<body class="bg-gray-800 text-white flex flex-col h-screen antialiased">
+
+    <header class="bg-gray-900/70 backdrop-blur-sm p-3 shadow-lg z-10">
+        <h1 class="text-xl md:text-2xl font-bold text-blue-400 text-center">Real-World A* Route Visualizer</h1>
+    </header>
+
+    <div class="flex-grow flex flex-col md:flex-row p-4 gap-4 overflow-hidden">
+        
+        <div class="w-full md:w-1/3 lg:w-1/4 bg-gray-900 p-4 rounded-lg shadow-xl flex flex-col gap-4 z-10 overflow-y-auto">
+            <div>
+                <label for="startAddress" class="block mb-2 text-sm font-medium text-gray-300">Start Address</label>
+                <input type="text" id="startAddress" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg w-full p-2.5" placeholder="e.g., New York, NY" value="Wrigley Field, Chicago, IL">
+            </div>
+            <div>
+                <label for="endAddress" class="block mb-2 text-sm font-medium text-gray-300">End Address</label>
+                <input type="text" id="endAddress" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg w-full p-2.5" placeholder="e.g., Los Angeles, CA" value="O'Hare International Airport, Chicago, IL">
+            </div>
+            
+            <div>
+                <label class="block mb-2 text-sm font-medium text-gray-300">Optimize For</label>
+                <div class="flex items-center justify-center bg-gray-800 p-1 rounded-lg">
+                    <input type="radio" id="mode-time" name="routingMode" value="time" class="sr-only" checked>
+                    <label for="mode-time" class="radio-label flex-1 text-center">Fastest Time</label>
+                    <input type="radio" id="mode-distance" name="routingMode" value="distance" class="sr-only">
+                    <label for="mode-distance" class="radio-label flex-1 text-center">Shortest Distance</label>
+                </div>
+            </div>
+
+            <div>
+                <label for="animationSpeed" class="block mb-2 text-sm font-medium text-gray-300">Animation Speed</label>
+                <input type="range" id="animationSpeed" min="1" max="10" value="5" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+            </div>
+
+            <div class="flex gap-2">
+                <button id="findRouteBtn" class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
+                    <span id="btn-text">Find Route</span>
+                </button>
+                <button id="cancelBtn" class="hidden w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg">Cancel</button>
+                <button id="replayBtn" class="hidden w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">Replay</button>
+                <button id="cancelReplayBtn" class="hidden w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg">Cancel Replay</button>
+            </div>
+
+            <div id="statusPanel" class="mt-2 text-sm text-gray-400 bg-gray-800 p-3 rounded-lg min-h-[120px]">
+                Enter addresses and choose an optimization goal to begin.
+            </div>
+             <div id="route-info" class="hidden mt-2 text-sm text-gray-300 space-y-2">
+                <p><strong><span id="primary-metric-label"></span>:</strong> <span id="primary-metric-value" class="text-lg font-bold text-blue-300"></span></p>
+                <p><strong><span id="secondary-metric-label"></span>:</strong> <span id="secondary-metric-value"></span></p>
+                <p><strong>Nodes Explored:</strong> <span id="nodes-explored"></span></p>
+            </div>
+
+            <div id="cache-info" class="mt-2 text-xs text-gray-500 bg-gray-800 p-2 rounded-lg">
+                <p><strong>Cache Status:</strong></p>
+                <div class="grid grid-cols-2 gap-2 mt-1">
+                    <div class="text-center">
+                        <div class="text-green-400 font-bold" id="geocoding-cache-count">0</div>
+                        <div>Geocoding</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-blue-400 font-bold" id="map-cache-count">0</div>
+                        <div>Map Data</div>
+                    </div>
+                </div>
+                <button id="clear-cache-btn" class="w-full mt-2 bg-gray-600 hover:bg-gray-500 text-white text-xs py-1 px-2 rounded">
+                    Clear Cache
+                </button>
+            </div>
+        </div>
+
+        <div class="flex-grow w-full md:w-2/3 lg:w-3/4 h-64 md:h-auto z-0">
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
