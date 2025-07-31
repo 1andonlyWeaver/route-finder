@@ -19,19 +19,35 @@ L.CanvasLayer = L.Layer.extend({
 
         this._renderer.on('update', this._update, this);
         map.on({
+            'movestart': this._onMoveStart,
             'moveend': this._reset,
-            'zoomend': this._reset
+            'zoomstart': this._onMoveStart,
+            'zoomend': this._reset,
+            'resize': this._reset
         }, this);
     },
 
     onRemove: function (map) {
         map.off({
+            'movestart': this._onMoveStart,
             'moveend': this._reset,
-            'zoomend': this._reset
+            'zoomstart': this._onMoveStart,
+            'zoomend': this._reset,
+            'resize': this._reset
         }, this);
         this._renderer.off('update', this._update, this);
         this._renderer.remove();
         this._renderer = null;
+    },
+
+    _onMoveStart: function () {
+        // Clear canvas immediately when movement starts to prevent artifacts
+        if (this._renderer && this._renderer._container) {
+            const ctx = this._renderer._container.getContext('2d');
+            if (ctx) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            }
+        }
     },
 
     _update: function () {
@@ -48,6 +64,14 @@ L.CanvasLayer = L.Layer.extend({
     },
 
     _reset: function () {
+        // Clear the canvas completely when map moves/zooms
+        if (this._renderer && this._renderer._container) {
+            const ctx = this._renderer._container.getContext('2d');
+            if (ctx) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            }
+        }
+        
         if (this._renderer) {
             this._renderer._update();
         }

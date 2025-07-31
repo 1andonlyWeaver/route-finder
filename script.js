@@ -741,8 +741,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     for (let i = 0; i < currentIndex; i++) {
                         const segment = allSegments[i];
                         if (segment && segment.length === 2) {
-                            const p1 = info.map.latLngToContainerPoint(segment[0]);
-                            const p2 = info.map.latLngToContainerPoint(segment[1]);
+                            const p1 = info.map.latLngToLayerPoint(segment[0]);
+                            const p2 = info.map.latLngToLayerPoint(segment[1]);
                             if (p1 && p2 && !isNaN(p1.x) && !isNaN(p1.y) && !isNaN(p2.x) && !isNaN(p2.y)) {
                                 ctx.moveTo(p1.x, p1.y);
                                 ctx.lineTo(p2.x, p2.y);
@@ -759,8 +759,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     for (let i = frontierStart; i < currentIndex; i++) {
                          const segment = allSegments[i];
                          if (segment && segment.length === 2) {
-                            const p1 = info.map.latLngToContainerPoint(segment[0]);
-                            const p2 = info.map.latLngToContainerPoint(segment[1]);
+                            const p1 = info.map.latLngToLayerPoint(segment[0]);
+                            const p2 = info.map.latLngToLayerPoint(segment[1]);
                             if (p1 && p2 && !isNaN(p1.x) && !isNaN(p1.y) && !isNaN(p2.x) && !isNaN(p2.y)) {
                                 ctx.moveTo(p1.x, p1.y);
                                 ctx.lineTo(p2.x, p2.y);
@@ -981,10 +981,78 @@ document.addEventListener('DOMContentLoaded', () => {
         updateStatus("Search cancelled. Ready for new route.");
     });
 
-    clearCacheBtn.addEventListener('click', () => {
-        if (confirm('Are you sure you want to clear all cached data? This will force fresh downloads on the next route calculation.')) {
+    // Function to handle clear cache
+    function handleClearCache() {
+        console.log('Clear Cache button clicked'); // Debug log
+        
+        // Custom confirmation UI that works in sandboxed environments
+        const originalText = clearCacheBtn.textContent;
+        const originalClass = clearCacheBtn.className;
+        
+        // First click - show warning
+        if (clearCacheBtn.textContent === 'Clear Cache') {
+            clearCacheBtn.textContent = 'Click Again to Confirm';
+            clearCacheBtn.className = 'w-full mt-2 bg-red-600 hover:bg-red-700 text-white text-xs py-1 px-2 rounded';
+            updateStatus("⚠️ Click 'Clear Cache' again to confirm deletion of all cached data.");
+            
+            // Reset button after 3 seconds if not clicked again
+            setTimeout(() => {
+                if (clearCacheBtn.textContent === 'Click Again to Confirm') {
+                    clearCacheBtn.textContent = originalText;
+                    clearCacheBtn.className = originalClass;
+                    updateStatus("Cache clear cancelled.");
+                }
+            }, 3000);
+            
+        } else if (clearCacheBtn.textContent === 'Click Again to Confirm') {
+            // Second click - actually clear cache
+            console.log('User confirmed cache clear'); // Debug log
+            clearCacheBtn.textContent = originalText;
+            clearCacheBtn.className = originalClass;
             cacheManager.clearAll();
-            updateStatus("Cache cleared successfully. Next route will fetch fresh data.");
+            updateStatus("✅ Cache cleared successfully. Next route will fetch fresh data.");
+            console.log('Cache cleared and status updated'); // Debug log
+        }
+    }
+
+    // Multiple approaches to ensure the Clear Cache button works
+    if (clearCacheBtn) {
+        // Method 1: Standard event listener
+        clearCacheBtn.addEventListener('click', handleClearCache);
+        console.log('Clear Cache button event listener attached successfully');
+        
+        // Method 2: Direct onclick as backup
+        clearCacheBtn.onclick = handleClearCache;
+        
+        // Method 3: Ensure the button is clickable
+        clearCacheBtn.style.pointerEvents = 'auto';
+        clearCacheBtn.style.cursor = 'pointer';
+        
+    } else {
+        console.error('Clear Cache button not found! ID: clear-cache-btn');
+        
+        // Method 4: Try to find and attach later using document delegation
+        setTimeout(() => {
+            const laterBtn = document.getElementById('clear-cache-btn');
+            if (laterBtn) {
+                console.log('Found Clear Cache button on retry');
+                laterBtn.addEventListener('click', handleClearCache);
+                laterBtn.onclick = handleClearCache;
+                laterBtn.style.pointerEvents = 'auto';
+                laterBtn.style.cursor = 'pointer';
+            } else {
+                console.error('Clear Cache button still not found after retry');
+            }
+        }, 100);
+    }
+    
+    // Method 5: Document-wide event delegation as final backup
+    document.addEventListener('click', (event) => {
+        if (event.target && event.target.id === 'clear-cache-btn') {
+            console.log('Clear Cache button clicked via event delegation');
+            event.preventDefault();
+            event.stopPropagation();
+            handleClearCache();
         }
     });
 
