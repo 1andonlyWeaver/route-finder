@@ -132,10 +132,21 @@ document.addEventListener('DOMContentLoaded', () => {
         getCachedMapData(bounds) {
             // Look for cached data that covers the requested bounds
             for (const [key, entry] of this.mapDataCache.entries()) {
+                // Skip route-specific cache entries, as their keys are not bounds
+                if (entry.routeKey) {
+                    continue;
+                }
+
                 if (this.isExpired(entry, CACHE_CONFIG.MAP_DATA_EXPIRY)) continue;
                 
                 const cachedBounds = this.boundsFromKey(key);
                 
+                // Validate the bounds object before using it
+                if (!cachedBounds || !cachedBounds.isValid()) {
+                    console.warn(`Skipping invalid cached bounds from key: ${key}`);
+                    continue;
+                }
+
                 // Try exact containment first, then overlap
                 if (this.boundsContains(cachedBounds, bounds)) {
                     console.log(`✅ Cache hit (exact containment)! Using cached data`);
@@ -203,7 +214,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Helper methods
         boundsFromKey(key) {
-            const [south, west, north, east] = key.split(',').map(Number);
+            const parts = key.split(',').map(Number);
+            if (parts.length !== 4 || parts.some(isNaN)) {
+                console.error(`Invalid bounds key: "${key}"`);
+                return null;
+            }
+            const [south, west, north, east] = parts;
             return L.latLngBounds([south, west], [north, east]);
         }
 
@@ -360,18 +376,32 @@ document.addEventListener('DOMContentLoaded', () => {
         // Check cache first
         const cached = cacheManager.getCachedGeocode(address);
         if (cached) {
-            console.log(`Using cached geocoding for: ${address}`);
-            return cached;
+            // Validate cached data before returning it
+            if (cached && typeof cached.lat === 'number' && typeof cached.lon === 'number' && !isNaN(cached.lat) && !isNaN(cached.lon)) {
+                console.log(`Using valid cached geocoding for: ${address}`);
+                return cached;
+            }
+            // If cache is invalid, fall through to re-fetch
+            console.warn(`Invalid geocoding data found in cache for "${address}". Re-fetching...`);
         }
 
         // If not in cache, fetch from API
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`;
         const response = await fetch(url, { headers: { 'User-Agent': 'RouteVisualizer/1.0' }});
         if (!response.ok) throw new Error(`Geocoding failed: ${response.statusText}`);
-        const data = await response.json();
-        if (!data.length) throw new Error(`Address not found: "${address}"`);
-        
-        const coords = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+            const data = await response.json();
+    if (!data.length) throw new Error(`Address not found: "${address}"`);
+
+    const result = data[0];
+    const lat = parseFloat(result.lat);
+    const lon = parseFloat(result.lon);
+
+    if (isNaN(lat) || isNaN(lon)) {
+        console.error("Geocoding service returned invalid coordinates for address:", address, "Response:", result);
+        throw new Error(`Invalid coordinates received for address: "${address}"`);
+    }
+    
+    const coords = { lat, lon };
         
         // Cache the result
         cacheManager.setCachedGeocode(address, coords);
