@@ -117,6 +117,23 @@
                 <p><strong><span id="secondary-metric-label"></span>:</strong> <span id="secondary-metric-value"></span></p>
                 <p><strong>Nodes Explored:</strong> <span id="nodes-explored"></span></p>
             </div>
+
+            <div id="cache-info" class="mt-2 text-xs text-gray-500 bg-gray-800 p-2 rounded-lg">
+                <p><strong>Cache Status:</strong></p>
+                <div class="grid grid-cols-2 gap-2 mt-1">
+                    <div class="text-center">
+                        <div class="text-green-400 font-bold" id="geocoding-cache-count">0</div>
+                        <div>Geocoding</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-blue-400 font-bold" id="map-cache-count">0</div>
+                        <div>Map Data</div>
+                    </div>
+                </div>
+                <button id="clear-cache-btn" class="w-full mt-2 bg-gray-600 hover:bg-gray-500 text-white text-xs py-1 px-2 rounded">
+                    Clear Cache
+                </button>
+            </div>
         </div>
 
         <div class="flex-grow w-full md:w-2/3 lg:w-3/4 h-64 md:h-auto z-0">

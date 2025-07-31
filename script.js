@@ -27,6 +27,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const secondaryMetricValue = document.getElementById('secondary-metric-value');
     const nodesExploredEl = document.getElementById('nodes-explored');
     const animationSpeedSlider = document.getElementById('animationSpeed');
+    const geocodingCacheCount = document.getElementById('geocoding-cache-count');
+    const mapCacheCount = document.getElementById('map-cache-count');
+    const clearCacheBtn = document.getElementById('clear-cache-btn');
 
     // --- State Variables ---
     let map, startMarker, endMarker, finalPathLayer, snapLinesLayer, animationCanvasLayer;
@@ -46,6 +49,297 @@ document.addEventListener('DOMContentLoaded', () => {
     ];
     const GRID_DIM = 2;
 
+    // --- Cache Configuration ---
+    const CACHE_CONFIG = {
+        // Cache expiration times (in milliseconds)
+        GEOCODING_EXPIRY: 7 * 24 * 60 * 60 * 1000, // 7 days
+        MAP_DATA_EXPIRY: 3 * 24 * 60 * 60 * 1000,  // 3 days
+        
+        // Maximum cache sizes (number of entries)
+        MAX_GEOCODING_ENTRIES: 100,
+        MAX_MAP_DATA_ENTRIES: 20,
+        
+        // Minimum distance (in km) to consider caches as different
+        MIN_CACHE_DISTANCE: 5,
+        
+        // Storage keys
+        STORAGE_PREFIX: 'route_finder_cache_'
+    };
+
+    // --- Cache System ---
+    class CacheManager {
+        constructor() {
+            this.geocodingCache = new Map();
+            this.mapDataCache = new Map();
+            this.loadFromStorage();
+        }
+
+        // Generate cache key for geocoding
+        geocodingKey(address) {
+            return address.toLowerCase().trim();
+        }
+
+        // Generate cache key for map data based on bounds
+        mapDataKey(bounds) {
+            const precision = 2; // ~1km precision - balance between cache hits and efficiency
+            const south = Math.round(bounds.getSouth() * Math.pow(10, precision)) / Math.pow(10, precision);
+            const west = Math.round(bounds.getWest() * Math.pow(10, precision)) / Math.pow(10, precision);
+            const north = Math.round(bounds.getNorth() * Math.pow(10, precision)) / Math.pow(10, precision);
+            const east = Math.round(bounds.getEast() * Math.pow(10, precision)) / Math.pow(10, precision);
+            return `${south},${west},${north},${east}`;
+        }
+
+        // Generate cache key based on start/end coordinates for route-specific caching
+        routeBasedKey(startCoords, endCoords) {
+            const precision = 2; // ~1km precision
+            const startLat = Math.round(startCoords.lat * Math.pow(10, precision)) / Math.pow(10, precision);
+            const startLon = Math.round(startCoords.lon * Math.pow(10, precision)) / Math.pow(10, precision);
+            const endLat = Math.round(endCoords.lat * Math.pow(10, precision)) / Math.pow(10, precision);
+            const endLon = Math.round(endCoords.lon * Math.pow(10, precision)) / Math.pow(10, precision);
+            return `route_${startLat},${startLon}_to_${endLat},${endLon}`;
+        }
+
+
+
+        // Check if an entry is expired
+        isExpired(entry, expiryTime) {
+            return Date.now() - entry.timestamp > expiryTime;
+        }
+
+        // Geocoding cache methods
+        getCachedGeocode(address) {
+            const key = this.geocodingKey(address);
+            const entry = this.geocodingCache.get(key);
+            if (entry && !this.isExpired(entry, CACHE_CONFIG.GEOCODING_EXPIRY)) {
+                return entry.data;
+            }
+            return null;
+        }
+
+        setCachedGeocode(address, coords) {
+            const key = this.geocodingKey(address);
+            this.geocodingCache.set(key, {
+                data: coords,
+                timestamp: Date.now()
+            });
+            this.enforceLimit(this.geocodingCache, CACHE_CONFIG.MAX_GEOCODING_ENTRIES);
+            this.saveToStorage();
+            updateCacheDisplay();
+        }
+
+        // Map data cache methods
+        getCachedMapData(bounds) {
+            // Look for cached data that covers the requested bounds
+            for (const [key, entry] of this.mapDataCache.entries()) {
+                if (this.isExpired(entry, CACHE_CONFIG.MAP_DATA_EXPIRY)) continue;
+                
+                const cachedBounds = this.boundsFromKey(key);
+                
+                // Try exact containment first, then overlap
+                if (this.boundsContains(cachedBounds, bounds)) {
+                    console.log(`✅ Cache hit (exact containment)! Using cached data`);
+                    return entry.data;
+                } else if (this.boundsOverlap(cachedBounds, bounds)) {
+                    console.log(`✅ Cache hit (overlap)! Using cached data`);
+                    return entry.data;
+                }
+            }
+            return null;
+        }
+
+        // Route-based cache methods
+        getCachedMapDataByRoute(startCoords, endCoords) {
+            const routeKey = this.routeBasedKey(startCoords, endCoords);
+            
+            const entry = this.mapDataCache.get(routeKey);
+            if (entry && !this.isExpired(entry, CACHE_CONFIG.MAP_DATA_EXPIRY)) {
+                console.log(`✅ Route-based map cache hit!`);
+                return entry.data;
+            }
+            
+            return null;
+        }
+
+        setCachedMapDataByRoute(startCoords, endCoords, bounds, data) {
+            const routeKey = this.routeBasedKey(startCoords, endCoords);
+            
+            this.mapDataCache.set(routeKey, {
+                data: data,
+                timestamp: Date.now(),
+                bounds: {
+                    south: bounds.getSouth(),
+                    west: bounds.getWest(),
+                    north: bounds.getNorth(),
+                    east: bounds.getEast()
+                },
+                routeKey: true // Mark this as a route-based cache
+            });
+            this.enforceLimit(this.mapDataCache, CACHE_CONFIG.MAX_MAP_DATA_ENTRIES);
+            this.saveToStorage();
+            updateCacheDisplay();
+        }
+
+
+
+        setCachedMapData(bounds, data) {
+            const key = this.mapDataKey(bounds);
+            this.mapDataCache.set(key, {
+                data: data,
+                timestamp: Date.now(),
+                bounds: {
+                    south: bounds.getSouth(),
+                    west: bounds.getWest(),
+                    north: bounds.getNorth(),
+                    east: bounds.getEast()
+                }
+            });
+            this.enforceLimit(this.mapDataCache, CACHE_CONFIG.MAX_MAP_DATA_ENTRIES);
+            this.saveToStorage();
+            updateCacheDisplay();
+        }
+
+
+
+        // Helper methods
+        boundsFromKey(key) {
+            const [south, west, north, east] = key.split(',').map(Number);
+            return L.latLngBounds([south, west], [north, east]);
+        }
+
+        boundsContains(containerBounds, targetBounds) {
+            return containerBounds.getSouth() <= targetBounds.getSouth() &&
+                   containerBounds.getWest() <= targetBounds.getWest() &&
+                   containerBounds.getNorth() >= targetBounds.getNorth() &&
+                   containerBounds.getEast() >= targetBounds.getEast();
+        }
+
+        // Check if bounds overlap significantly (more forgiving than exact containment)
+        boundsOverlap(bounds1, bounds2) {
+            const threshold = 0.8; // 80% overlap required
+            
+            const overlapSouth = Math.max(bounds1.getSouth(), bounds2.getSouth());
+            const overlapNorth = Math.min(bounds1.getNorth(), bounds2.getNorth());
+            const overlapWest = Math.max(bounds1.getWest(), bounds2.getWest());
+            const overlapEast = Math.min(bounds1.getEast(), bounds2.getEast());
+            
+            if (overlapNorth <= overlapSouth || overlapEast <= overlapWest) {
+                return false; // No overlap
+            }
+            
+            const overlapArea = (overlapNorth - overlapSouth) * (overlapEast - overlapWest);
+            const targetArea = (bounds2.getNorth() - bounds2.getSouth()) * (bounds2.getEast() - bounds2.getWest());
+            
+            return (overlapArea / targetArea) >= threshold;
+        }
+
+        enforceLimit(cache, maxEntries) {
+            if (cache.size > maxEntries) {
+                // Remove oldest entries
+                const entries = Array.from(cache.entries());
+                entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+                const toRemove = entries.slice(0, cache.size - maxEntries);
+                toRemove.forEach(([key]) => cache.delete(key));
+            }
+        }
+
+        // Storage persistence
+        saveToStorage() {
+            try {
+                // Save geocoding cache
+                const geocodingData = Array.from(this.geocodingCache.entries());
+                localStorage.setItem(CACHE_CONFIG.STORAGE_PREFIX + 'geocoding', JSON.stringify(geocodingData));
+
+                // Save map data cache (excluding actual data to save space, just metadata)
+                const mapDataMeta = Array.from(this.mapDataCache.entries()).map(([key, entry]) => [
+                    key, { timestamp: entry.timestamp, bounds: entry.bounds }
+                ]);
+                localStorage.setItem(CACHE_CONFIG.STORAGE_PREFIX + 'mapdata_meta', JSON.stringify(mapDataMeta));
+            } catch (e) {
+                console.warn('Failed to save cache to localStorage:', e);
+            }
+        }
+
+        loadFromStorage() {
+            try {
+                // Load geocoding cache
+                const geocodingData = localStorage.getItem(CACHE_CONFIG.STORAGE_PREFIX + 'geocoding');
+                if (geocodingData) {
+                    this.geocodingCache = new Map(JSON.parse(geocodingData));
+                }
+            } catch (e) {
+                console.warn('Failed to load cache from localStorage:', e);
+            }
+        }
+
+        // Clear expired entries
+        cleanup() {
+            const now = Date.now();
+            
+            // Clean geocoding cache
+            for (const [key, entry] of this.geocodingCache.entries()) {
+                if (this.isExpired(entry, CACHE_CONFIG.GEOCODING_EXPIRY)) {
+                    this.geocodingCache.delete(key);
+                }
+            }
+
+            // Clean map data cache
+            for (const [key, entry] of this.mapDataCache.entries()) {
+                if (this.isExpired(entry, CACHE_CONFIG.MAP_DATA_EXPIRY)) {
+                    this.mapDataCache.delete(key);
+                }
+            }
+
+            this.saveToStorage();
+        }
+
+        // Get cache statistics
+        getStats() {
+            return {
+                geocoding: this.geocodingCache.size,
+                mapData: this.mapDataCache.size
+            };
+        }
+
+        // Clear all caches
+        clearAll() {
+            this.geocodingCache.clear();
+            this.mapDataCache.clear();
+            try {
+                Object.keys(localStorage).forEach(key => {
+                    if (key.startsWith(CACHE_CONFIG.STORAGE_PREFIX)) {
+                        localStorage.removeItem(key);
+                    }
+                });
+            } catch (e) {
+                console.warn('Failed to clear localStorage cache:', e);
+            }
+            updateCacheDisplay();
+        }
+    }
+
+    // Initialize cache manager
+    const cacheManager = new CacheManager();
+
+    // Set up periodic cache cleanup (every 30 minutes)
+    setInterval(() => {
+        cacheManager.cleanup();
+        updateCacheDisplay();
+        console.log('Cache cleanup completed. Stats:', cacheManager.getStats());
+    }, 30 * 60 * 1000);
+
+    // Initial cleanup on load
+    cacheManager.cleanup();
+
+    // Function to update cache status display
+    function updateCacheDisplay() {
+        const stats = cacheManager.getStats();
+        geocodingCacheCount.textContent = stats.geocoding;
+        mapCacheCount.textContent = stats.mapData;
+    }
+
+    // Update cache display on load
+    updateCacheDisplay();
+
     // --- Core Functions ---
     function initMap() {
         map = L.map('map').setView([39.8283, -98.5795], 4);
@@ -62,15 +356,46 @@ document.addEventListener('DOMContentLoaded', () => {
     function haversineDistance(c1, c2) { const R=6371e3,p1=c1.lat*Math.PI/180,p2=c2.lat*Math.PI/180,dp=(c2.lat-c1.lat)*Math.PI/180,dl=(c2.lon-c1.lon)*Math.PI/180,a=Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)) }
 
     async function geocodeAddress(address) {
+        // Check cache first
+        const cached = cacheManager.getCachedGeocode(address);
+        if (cached) {
+            console.log(`Using cached geocoding for: ${address}`);
+            return cached;
+        }
+
+        // If not in cache, fetch from API
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`;
         const response = await fetch(url, { headers: { 'User-Agent': 'RouteVisualizer/1.0' }});
         if (!response.ok) throw new Error(`Geocoding failed: ${response.statusText}`);
         const data = await response.json();
         if (!data.length) throw new Error(`Address not found: "${address}"`);
-        return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+        
+        const coords = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+        
+        // Cache the result
+        cacheManager.setCachedGeocode(address, coords);
+        console.log(`Cached geocoding for: ${address}`);
+        
+        return coords;
     }
 
     async function getRoadNetworkTiled(bounds, startCoords, endCoords) {
+        // Check route-based cache first
+        const routeCached = cacheManager.getCachedMapDataByRoute(startCoords, endCoords);
+        if (routeCached) {
+            console.log('Using cached map data (tiled - route-based)');
+            updateStatus('Using cached road data (⚡ fast load)...');
+            return routeCached;
+        }
+
+        // Check bounds-based cache as fallback
+        const boundsCached = cacheManager.getCachedMapData(bounds);
+        if (boundsCached) {
+            console.log('Using cached map data (tiled - bounds-based)');
+            updateStatus('Using cached road data (⚡ fast load)...');
+            return boundsCached;
+        }
+
         const mergedElements = new Map();
         const totalTiles = GRID_DIM * GRID_DIM;
         let currentTile = 1;
@@ -98,13 +423,42 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentTile++;
             }
         }
-        return { elements: Array.from(mergedElements.values()) };
+        
+        const result = { elements: Array.from(mergedElements.values()) };
+        
+        // Cache the result using route-based caching
+        cacheManager.setCachedMapDataByRoute(startCoords, endCoords, bounds, result);
+        console.log('✓ Cached map data (tiled - route-based)');
+        
+        return result;
     }
     
     async function getRoadNetworkSingle(bounds, startCoords, endCoords) {
+        // Check route-based cache first
+        const routeCached = cacheManager.getCachedMapDataByRoute(startCoords, endCoords);
+        if (routeCached) {
+            console.log('Using cached map data (single - route-based)');
+            updateStatus('Using cached road data (⚡ fast load)...');
+            return routeCached;
+        }
+
+        // Check bounds-based cache as fallback
+        const boundsCached = cacheManager.getCachedMapData(bounds);
+        if (boundsCached) {
+            console.log('Using cached map data (single - bounds-based)');
+            updateStatus('Using cached road data (⚡ fast load)...');
+            return boundsCached;
+        }
+
         updateStatus('Downloading road data...');
         const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
-        return await fetchTileData(bbox, startCoords, endCoords);
+        const result = await fetchTileData(bbox, startCoords, endCoords);
+        
+        // Cache the result using route-based caching
+        cacheManager.setCachedMapDataByRoute(startCoords, endCoords, bounds, result);
+        console.log('✓ Cached map data (single - route-based)');
+        
+        return result;
     }
 
     async function fetchTileData(bbox, startCoords, endCoords) {
@@ -198,6 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         });
+        
         return nodes;
     }
 
@@ -624,6 +979,13 @@ document.addEventListener('DOMContentLoaded', () => {
         setLoading(false);
         replayBtn.classList.add('hidden');
         updateStatus("Search cancelled. Ready for new route.");
+    });
+
+    clearCacheBtn.addEventListener('click', () => {
+        if (confirm('Are you sure you want to clear all cached data? This will force fresh downloads on the next route calculation.')) {
+            cacheManager.clearAll();
+            updateStatus("Cache cleared successfully. Next route will fetch fresh data.");
+        }
     });
 
     findRouteBtn.addEventListener('click', handleFindRoute);
