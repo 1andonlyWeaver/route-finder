@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-World A* Routing Visualizer (LOD)</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        #map { height: 100%; width: 100%; border-radius: 0.5rem; z-index: 1; background-color: #111827; }
+        .leaflet-control-zoom-in, .leaflet-control-zoom-out { background-color: #1f2937 !important; color: white !important; }
+        .leaflet-control-zoom-in:hover, .leaflet-control-zoom-out:hover { background-color: #374151 !important; }
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            width: 1rem;
+            height: 1rem;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .radio-label {
+            cursor: pointer; padding: 0.5rem 1rem; border-radius: 0.375rem;
+            transition: background-color 0.2s, color 0.2s;
+            background-color: #374151; color: #d1d5db;
+        }
+        input[type="radio"]:checked + .radio-label {
+            background-color: #2563eb; color: white; font-weight: 600;
+        }
+        /* Custom styles for range slider */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+            cursor: pointer;
+            width: 100%;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            background: #374151;
+            height: 0.5rem;
+            border-radius: 0.25rem;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            margin-top: -4px;
+            background-color: #2563eb;
+            height: 1.25rem;
+            width: 1.25rem;
+            border-radius: 50%;
+            border: 2px solid #fff;
+        }
+         input[type=range]::-moz-range-track {
+            background: #374151;
+            height: 0.5rem;
+            border-radius: 0.25rem;
+        }
+        input[type=range]::-moz-range-thumb {
+            background-color: #2563eb;
+            height: 1.25rem;
+            width: 1.25rem;
+            border-radius: 50%;
+            border: 2px solid #fff;
+        }
+    </style>
+</head>
+<body class="bg-gray-800 text-white flex flex-col h-screen antialiased">
+
+    <header class="bg-gray-900/70 backdrop-blur-sm p-3 shadow-lg z-10">
+        <h1 class="text-xl md:text-2xl font-bold text-blue-400 text-center">Real-World A* Route Visualizer</h1>
+    </header>
+
+    <div class="flex-grow flex flex-col md:flex-row p-4 gap-4 overflow-hidden">
+        
+        <div class="w-full md:w-1/3 lg:w-1/4 bg-gray-900 p-4 rounded-lg shadow-xl flex flex-col gap-4 z-10 overflow-y-auto">
+            <div>
+                <label for="startAddress" class="block mb-2 text-sm font-medium text-gray-300">Start Address</label>
+                <input type="text" id="startAddress" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg w-full p-2.5" placeholder="e.g., New York, NY" value="New York, NY">
+            </div>
+            <div>
+                <label for="endAddress" class="block mb-2 text-sm font-medium text-gray-300">End Address</label>
+                <input type="text" id="endAddress" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg w-full p-2.5" placeholder="e.g., Los Angeles, CA" value="Los Angeles, CA">
+            </div>
+            
+            <div>
+                <label class="block mb-2 text-sm font-medium text-gray-300">Optimize For</label>
+                <div class="flex items-center justify-center bg-gray-800 p-1 rounded-lg">
+                    <input type="radio" id="mode-time" name="routingMode" value="time" class="sr-only" checked>
+                    <label for="mode-time" class="radio-label flex-1 text-center">Fastest Time</label>
+                    <input type="radio" id="mode-distance" name="routingMode" value="distance" class="sr-only">
+                    <label for="mode-distance" class="radio-label flex-1 text-center">Shortest Distance</label>
+                </div>
+            </div>
+
+            <div>
+                <label for="animationSpeed" class="block mb-2 text-sm font-medium text-gray-300">Animation Speed</label>
+                <input type="range" id="animationSpeed" min="1" max="10" value="5" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+            </div>
+
+            <div class="flex gap-2">
+                <button id="findRouteBtn" class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
+                    <span id="btn-text">Find Route</span>
+                </button>
+                <button id="cancelBtn" class="hidden w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg">Cancel</button>
+                <button id="replayBtn" class="hidden w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">Replay</button>
+            </div>
+
+            <div id="statusPanel" class="mt-2 text-sm text-gray-400 bg-gray-800 p-3 rounded-lg min-h-[120px]">
+                Enter addresses and choose an optimization goal to begin.
+            </div>
+             <div id="route-info" class="hidden mt-2 text-sm text-gray-300 space-y-2">
+                <p><strong><span id="primary-metric-label"></span>:</strong> <span id="primary-metric-value" class="text-lg font-bold text-blue-300"></span></p>
+                <p><strong><span id="secondary-metric-label"></span>:</strong> <span id="secondary-metric-value"></span></p>
+                <p><strong>Nodes Explored:</strong> <span id="nodes-explored"></span></p>
+            </div>
+        </div>
+
+        <div class="flex-grow w-full md:w-2/3 lg:w-3/4 h-64 md:h-auto z-0">
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <script id="worker" type="javascript/worker">
+        // A* worker logic
+        class PriorityQueue {
+            constructor(comparator = (a, b) => a > b) { this._heap = []; this._comparator = comparator; }
+            size() { return this._heap.length; }
+            isEmpty() { return this.size() === 0; }
+            peek() { return this._heap[0]; }
+            _parent(i) { return Math.floor((i - 1) / 2); }
+            _leftChild(i) { return 2 * i + 1; }
+            _rightChild(i) { return 2 * i + 2; }
+            _swap(i, j) { [this._heap[i], this._heap[j]] = [this._heap[j], this._heap[i]]; }
+            _compare(i, j) { return this._comparator(this._heap[i], this._heap[j]); }
+            push(value) { this._heap.push(value); this._siftUp(); return this.size(); }
+            _siftUp() { let i = this.size() - 1; while (i > 0 && this._compare(i, this._parent(i))) { this._swap(i, this._parent(i)); i = this._parent(i); } }
+            pop() { if (this.size() > 1) { this._swap(0, this.size() - 1); } const val = this._heap.pop(); this._siftDown(); return val; }
+            _siftDown() { let i = 0; while ((this._leftChild(i) < this.size() && this._compare(this._leftChild(i), i)) || (this._rightChild(i) < this.size() && this._compare(this._rightChild(i), i))) { const child = this._rightChild(i) < this.size() && this._compare(this._rightChild(i), this._leftChild(i)) ? this._rightChild(i) : this._leftChild(i); this._swap(i, child); i = child; } }
+        }
+
+        function haversineDistance(c1, c2) {
+            const R = 6371e3;
+            const p1 = c1.lat * Math.PI / 180, p2 = c2.lat * Math.PI / 180;
+            const dp = (c2.lat - c1.lat) * Math.PI / 180, dl = (c2.lon - c1.lon) * Math.PI / 180;
+            const a = Math.sin(dp / 2) * Math.sin(dp / 2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+        
+        self.onmessage = function(e) {
+            const { graphData, startNodeId, endNodeId, mode, MAX_SPEED_MS } = e.data;
+            
+            const graph = new Map(graphData);
+            const startNode = graph.get(startNodeId);
+            const endNode = graph.get(endNodeId);
+            
+            if (!startNode || !endNode) {
+                self.postMessage({ type: 'error', payload: 'Start or end node not found in graph.' });
+                return;
+            }
+
+            const openSet = new PriorityQueue((a, b) => a.f < b.f);
+            const openSetMap = new Map();
+            startNode.g = 0;
+            startNode.h = mode === 'time' ? haversineDistance(startNode, endNode) / MAX_SPEED_MS : haversineDistance(startNode, endNode);
+            startNode.f = startNode.h;
+            openSet.push(startNode);
+            openSetMap.set(startNode.id, startNode);
+
+            const closedSet = new Set();
+            let animationLog = [];
+            const BATCH_SIZE = 500;
+            let pathBatch = [];
+
+            while (!openSet.isEmpty()) {
+                const current = openSet.pop();
+                openSetMap.delete(current.id);
+
+                if (current.id === endNode.id) {
+                    if (pathBatch.length > 0) animationLog.push(pathBatch);
+
+                    const finalPath = [];
+                    let temp = current;
+                    while (temp) {
+                        finalPath.push({ id: temp.id, lat: temp.lat, lon: temp.lon });
+                        temp = temp.parent;
+                    }
+                    finalPath.reverse();
+                    
+                    self.postMessage({ type: 'done', payload: { log: animationLog, finalPath: finalPath } });
+                    return;
+                }
+
+                closedSet.add(current.id);
+
+                if (current.parent) {
+                    pathBatch.push({
+                        from: { lat: current.parent.lat, lon: current.parent.lon },
+                        to: { lat: current.lat, lon: current.lon }
+                    });
+                }
+                
+                if (pathBatch.length >= BATCH_SIZE) {
+                    animationLog.push(pathBatch);
+                    pathBatch = [];
+                }
+                
+                for (const [neighborId, cost] of current.adj.entries()) {
+                    if (closedSet.has(neighborId)) continue;
+                    const neighbor = graph.get(neighborId);
+                    if (!neighbor) continue;
+
+                    const cost_g = mode === 'time' ? cost.time : cost.distance;
+                    const tentative_g = current.g + cost_g;
+                    
+                    const existingNeighbor = openSetMap.get(neighborId);
+                    if (!existingNeighbor || tentative_g < existingNeighbor.g) {
+                        const newNeighbor = { ...neighbor, g: tentative_g, parent: current };
+                        newNeighbor.h = mode === 'time' ? haversineDistance(newNeighbor, endNode) / MAX_SPEED_MS : haversineDistance(newNeighbor, endNode);
+                        newNeighbor.f = newNeighbor.g + newNeighbor.h;
+                        
+                        openSet.push(newNeighbor);
+                        openSetMap.set(neighborId, newNeighbor);
+                    }
+                }
+            }
+            self.postMessage({ type: 'error', payload: 'No path could be found.' });
+        };
+    </script>
+
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- Custom Error for Retry Logic ---
+        class PathNotFoundError extends Error {
+            constructor(message) {
+                super(message);
+                this.name = "PathNotFoundError";
+            }
+        }
+        class OverpassError extends Error {
+            constructor(message) {
+                super(message);
+                this.name = "OverpassError";
+            }
+        }
+
+        // --- DOM Elements ---
+        const startAddressInput = document.getElementById('startAddress');
+        const endAddressInput = document.getElementById('endAddress');
+        const findRouteBtn = document.getElementById('findRouteBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const replayBtn = document.getElementById('replayBtn');
+        const statusPanel = document.getElementById('statusPanel');
+        const routeInfoPanel = document.getElementById('route-info');
+        const primaryMetricLabel = document.getElementById('primary-metric-label');
+        const primaryMetricValue = document.getElementById('primary-metric-value');
+        const secondaryMetricLabel = document.getElementById('secondary-metric-label');
+        const secondaryMetricValue = document.getElementById('secondary-metric-value');
+        const nodesExploredEl = document.getElementById('nodes-explored');
+        const animationSpeedSlider = document.getElementById('animationSpeed');
+
+        // --- State Variables ---
+        let map, startMarker, endMarker, finalPathLayer, snapLinesLayer;
+        let aStarWorker = null;
+        let animationLog = [];
+        let lastFinalPathCoords = [];
+        let isReplaying = false;
+
+        // --- Constants ---
+        const DEFAULT_SPEEDS_KMH = { motorway: 110, trunk: 90, primary: 80, secondary: 70, tertiary: 50, unclassified: 40, residential: 30, motorway_link: 60, trunk_link: 50, primary_link: 40, secondary_link: 40, tertiary_link: 30, living_street: 10, service: 10, default: 40 };
+        const MAX_SPEED_KMH = Math.max(...Object.values(DEFAULT_SPEEDS_KMH));
+        const MAX_SPEED_MS = MAX_SPEED_KMH * 1000 / 3600;
+        const OVERPASS_ENDPOINTS = [
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.kumi.systems/api/interpreter",
+            "https://overpass.openstreetmap.ru/cgi/interpreter"
+        ];
+        const GRID_DIM = 2;
+
+        // --- Core Functions ---
+        function initMap() {
+            map = L.map('map').setView([39.8283, -98.5795], 4);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 20 }).addTo(map);
+        }
+
+        function updateStatus(message, isError = false) { statusPanel.innerHTML = message; statusPanel.className = `mt-2 text-sm p-3 rounded-lg min-h-[120px] ${isError ? 'bg-red-900/50 text-red-300' : 'bg-gray-800 text-gray-400'}`; }
+        function setLoading(isLoading) {
+            findRouteBtn.disabled = isLoading;
+            replayBtn.classList.add('hidden');
+            findRouteBtn.classList.toggle('hidden', isLoading);
+            cancelBtn.classList.toggle('hidden', !isLoading);
+        }
+        function haversineDistance(c1, c2) { const R=6371e3,p1=c1.lat*Math.PI/180,p2=c2.lat*Math.PI/180,dp=(c2.lat-c1.lat)*Math.PI/180,dl=(c2.lon-c1.lon)*Math.PI/180,a=Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)) }
+
+        async function geocodeAddress(address) {
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`;
+            const response = await fetch(url, { headers: { 'User-Agent': 'RouteVisualizer/1.0' }});
+            if (!response.ok) throw new Error(`Geocoding failed: ${response.statusText}`);
+            const data = await response.json();
+            if (!data.length) throw new Error(`Address not found: "${address}"`);
+            return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+        }
+
+        async function getRoadNetworkTiled(bounds, startCoords, endCoords) {
+            const mergedElements = new Map();
+            const totalTiles = GRID_DIM * GRID_DIM;
+            let currentTile = 1;
+
+            const latStep = (bounds.getNorth() - bounds.getSouth()) / GRID_DIM;
+            const lonStep = (bounds.getEast() - bounds.getWest()) / GRID_DIM;
+
+            for (let i = 0; i < GRID_DIM; i++) {
+                for (let j = 0; j < GRID_DIM; j++) {
+                    const south = bounds.getSouth() + i * latStep;
+                    const north = south + latStep;
+                    const west = bounds.getWest() + j * lonStep;
+                    const east = west + lonStep;
+                    
+                    const tileBbox = `${south},${west},${north},${east}`;
+                    
+                    updateStatus(`Downloading road data for tile ${currentTile} of ${totalTiles}...`);
+                    
+                    const tileData = await fetchTileData(tileBbox, startCoords, endCoords);
+                    tileData.elements.forEach(el => {
+                        if (!mergedElements.has(el.id)) {
+                            mergedElements.set(el.id, el);
+                        }
+                    });
+                    currentTile++;
+                }
+            }
+            return { elements: Array.from(mergedElements.values()) };
+        }
+        
+        async function getRoadNetworkSingle(bounds, startCoords, endCoords) {
+            updateStatus('Downloading road data...');
+            const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+            return await fetchTileData(bbox, startCoords, endCoords);
+        }
+
+        async function fetchTileData(bbox, startCoords, endCoords) {
+            const timeout = 90;
+            const highDetailRadius = 2000;
+            const mediumDetailRadius = 10000;
+            
+            const highDetailRoads = "^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|.*_link)$";
+            const mediumDetailRoads = "^(motorway|trunk|primary|secondary|tertiary|.*_link)$";
+            const lowDetailRoads = "^(motorway|trunk|primary|secondary|motorway_link|trunk_link|primary_link|secondary_link)$";
+
+            const query = `
+              [out:json][timeout:${timeout}];
+              (
+                way[highway~"${highDetailRoads}"](around:${highDetailRadius},${startCoords.lat},${startCoords.lon});
+                way[highway~"${highDetailRoads}"](around:${highDetailRadius},${endCoords.lat},${endCoords.lon});
+                way[highway~"${mediumDetailRoads}"](around:${mediumDetailRadius},${startCoords.lat},${startCoords.lon});
+                way[highway~"${mediumDetailRoads}"](around:${mediumDetailRadius},${endCoords.lat},${endCoords.lon});
+                way[highway~"${lowDetailRoads}"](${bbox});
+              );
+              out body;
+              >;
+              out skel qt;
+            `;
+
+            for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
+                const endpoint = OVERPASS_ENDPOINTS[i];
+                const serverName = new URL(endpoint).hostname;
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        body: `data=${encodeURIComponent(query.trim())}`
+                    });
+                    if (!response.ok) throw new Error(`Server ${serverName} returned status ${response.status}`);
+                    const responseText = await response.text();
+                    if (!responseText) throw new Error(`Server ${serverName} returned an empty response.`);
+                    return JSON.parse(responseText);
+                } catch (error) {
+                    console.error(`Attempt ${i + 1} failed for ${serverName}:`, error);
+                    if (i >= OVERPASS_ENDPOINTS.length - 1) {
+                        throw new OverpassError("All map data servers failed. Please try again later.");
+                    }
+                }
+            }
+        }
+
+        function buildGraph(osmData) {
+            updateStatus("Building road graph...");
+            const nodes = new Map();
+            osmData.elements.filter(e => e.type === 'node').forEach(node => { nodes.set(node.id, { id: node.id, lat: node.lat, lon: node.lon, adj: new Map() }); });
+            
+            osmData.elements.filter(e => e.type === 'way').forEach(way => {
+                const roadType = way.tags.highway || 'default';
+                let speedKmh = DEFAULT_SPEEDS_KMH[roadType] || DEFAULT_SPEEDS_KMH.default;
+                if (way.tags.maxspeed) {
+                    const speedMatch = way.tags.maxspeed.match(/\d+/);
+                    if (speedMatch) { let ps = parseInt(speedMatch[0], 10); if (way.tags.maxspeed.includes('mph')) ps *= 1.60934; speedKmh = ps; }
+                }
+                const speedMs = speedKmh * 1000 / 3600;
+
+                const isOneWay = way.tags.oneway === 'yes' || way.tags.oneway === '1';
+                const isReversed = way.tags.oneway === '-1';
+                const isImplicitlyOneWay = way.tags.junction === 'roundabout' || (way.tags.highway && way.tags.highway.includes('motorway') && way.tags.oneway !== 'no');
+
+                let congestionFactor = 1.0;
+                const lanes = parseInt(way.tags.lanes, 10);
+                if (!isNaN(lanes)) {
+                    if (lanes === 1) congestionFactor = 1.15;
+                    else if (lanes === 2) congestionFactor = 1.05;
+                    else if (lanes >= 4) congestionFactor = 0.9;
+                } else if (roadType === 'motorway' || roadType === 'motorway_link') {
+                    congestionFactor = 0.9; 
+                }
+
+                for (let i = 0; i < way.nodes.length - 1; i++) {
+                    const nodeA = nodes.get(way.nodes[i]);
+                    const nodeB = nodes.get(way.nodes[i+1]);
+                    if (nodeA && nodeB) {
+                        const distance = haversineDistance(nodeA, nodeB);
+                        const time = (distance / speedMs) * congestionFactor;
+                        const cost = { time, distance };
+                        
+                        if (isReversed) {
+                            nodeB.adj.set(nodeA.id, cost);
+                        } else if (isOneWay || isImplicitlyOneWay) {
+                            nodeA.adj.set(nodeB.id, cost);
+                        } else {
+                            nodeA.adj.set(nodeB.id, cost);
+                            nodeB.adj.set(nodeA.id, cost);
+                        }
+                    }
+                }
+            });
+            return nodes;
+        }
+
+        function findNearestNode(coords, graphNodes) {
+            let nearestNode = null, minDistance = Infinity;
+            if (graphNodes.size === 0) return null;
+
+            graphNodes.forEach(node => {
+                const d = haversineDistance(coords, node);
+                if (d < minDistance) {
+                    minDistance = d;
+                    nearestNode = node;
+                }
+            });
+
+            if (minDistance > 20000) {
+                 console.warn(`Could not find a road node within 20km of the address. Closest was ${minDistance.toFixed(0)}m away.`);
+                 return null;
+            }
+
+            return nearestNode;
+        }
+
+        function drawFinalPath(pathNodes, mode, graph) {
+            let totalDistance = 0, totalTime = 0;
+            for(let i=0; i < pathNodes.length - 1; i++){
+                const from = pathNodes[i];
+                const to = pathNodes[i+1];
+                const fromNodeInGraph = graph.get(from.id);
+                if (fromNodeInGraph) {
+                    const edge = fromNodeInGraph.adj.get(to.id);
+                    if(edge) { totalDistance += edge.distance; totalTime += edge.time; }
+                }
+            }
+            
+            const finalPathCoords = pathNodes.map(n => [n.lat, n.lon]);
+            lastFinalPathCoords = finalPathCoords; 
+            
+            const formatTime = (seconds) => {
+                if (seconds < 3600) return `${(seconds / 60).toFixed(1)} min`;
+                return `${(seconds / 3600).toFixed(1)} hours`;
+            };
+
+            if (mode === 'time') {
+                primaryMetricLabel.textContent = "Travel Time";
+                primaryMetricValue.textContent = formatTime(totalTime);
+                secondaryMetricLabel.textContent = "Distance";
+                secondaryMetricValue.textContent = `${(totalDistance / 1000).toFixed(2)} km`;
+            } else {
+                primaryMetricLabel.textContent = "Distance";
+                primaryMetricValue.textContent = `${(totalDistance / 1000).toFixed(2)} km`;
+                secondaryMetricLabel.textContent = "Travel Time";
+                secondaryMetricValue.textContent = formatTime(totalTime);
+            }
+            
+            let totalNodes = 0;
+            animationLog.forEach(batch => totalNodes += batch.length);
+            nodesExploredEl.textContent = totalNodes.toLocaleString();
+            routeInfoPanel.classList.remove('hidden');
+
+            if (finalPathLayer) map.removeLayer(finalPathLayer);
+            finalPathLayer = L.polyline(finalPathCoords, { color: '#facc15', weight: 6, opacity: 1, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+        }
+        
+        function cleanupMap(clearAll = true) {
+             if(clearAll) {
+                map.eachLayer(layer => { if (layer instanceof L.Polyline || layer instanceof L.Marker) map.removeLayer(layer); });
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 20 }).addTo(map);
+             } else {
+                if(finalPathLayer) map.removeLayer(finalPathLayer);
+                map.eachLayer(layer => { if(layer.options.pane === 'overlayPane' && layer !== snapLinesLayer && layer !== startMarker && layer !== endMarker) map.removeLayer(layer); });
+             }
+        }
+
+        async function playAnimation(log) {
+            cleanupMap(false);
+            const exploredLayer = L.layerGroup().addTo(map);
+            
+            function animationFrame() {
+                return new Promise(resolve => requestAnimationFrame(resolve));
+            }
+
+            const speedValue = parseInt(animationSpeedSlider.value, 10);
+            const maxFrames = 200; // Max frames for slowest speed
+            const minFrames = 20;  // Min frames for fastest speed
+            // Invert the speed value so 1 is slow (many frames) and 10 is fast (few frames)
+            const frames = Math.round(minFrames + ((maxFrames - minFrames) * (10 - speedValue) / 9));
+            const batchSize = Math.ceil(log.length / frames);
+
+
+            for (let i = 0; i < log.length; i += batchSize) {
+                const chunk = log.slice(i, i + batchSize);
+                const segmentsForThisTick = [];
+                chunk.forEach(frame => {
+                    segmentsForThisTick.push(...frame.map(segment => [[segment.from.lat, segment.from.lon], [segment.to.lat, segment.to.lon]]));
+                });
+
+                if (segmentsForThisTick.length > 0) {
+                    const exploredBatch = L.polyline(segmentsForThisTick, { color: '#dc2626', weight: 2, opacity: 0.6 });
+                    exploredLayer.addLayer(exploredBatch);
+
+                    const frontierBatch = L.polyline(segmentsForThisTick, { color: '#f97316', weight: 2, opacity: 0.8 }).addTo(map);
+                    
+                    await animationFrame();
+                    
+                    map.removeLayer(frontierBatch);
+                }
+            }
+        }
+
+        async function findRouteAttempt(padding, startCoords, endCoords, routingMode) {
+            const initialBounds = L.latLngBounds([startCoords.lat, startCoords.lon], [endCoords.lat, endCoords.lon]);
+            const center = initialBounds.getCenter();
+            const latSpan = initialBounds.getNorth() - initialBounds.getSouth();
+            const lngSpan = initialBounds.getEast() - initialBounds.getWest();
+            const maxSpan = Math.max(latSpan, lngSpan);
+            const halfSpan = maxSpan / 2;
+            const southWest = L.latLng(center.lat - halfSpan, center.lng - halfSpan);
+            const northEast = L.latLng(center.lat + halfSpan, center.lng + halfSpan);
+            const squareBounds = L.latLngBounds(southWest, northEast);
+            const bounds = squareBounds.pad(padding);
+
+            map.fitBounds(bounds);
+
+            let osmData;
+            try {
+                osmData = await getRoadNetworkSingle(bounds, startCoords, endCoords);
+            } catch (error) {
+                if (error instanceof OverpassError) {
+                    console.warn("Single request failed, falling back to tiled fetching.");
+                    updateStatus("Initial request failed. Splitting area into smaller tiles...");
+                    osmData = await getRoadNetworkTiled(bounds, startCoords, endCoords);
+                } else {
+                    throw error;
+                }
+            }
+            
+            const graph = buildGraph(osmData);
+            
+            if (graph.size === 0) {
+                throw new Error("Failed to build road graph. The downloaded map data may be empty or invalid.");
+            }
+
+            updateStatus("Snapping addresses to nearest roads...");
+            const startNode = findNearestNode(startCoords, graph);
+            const endNode = findNearestNode(endCoords, graph);
+            if (!startNode || !endNode) {
+                throw new PathNotFoundError("Could not find nearby roads. The map area might be too small.");
+            }
+
+            if (snapLinesLayer) map.removeLayer(snapLinesLayer);
+            snapLinesLayer = L.layerGroup([
+                L.polyline([startMarker.getLatLng(), [startNode.lat, startNode.lon]], {color: 'white', weight: 1, opacity: 0.7, dashArray: '5, 5'}),
+                L.polyline([endMarker.getLatLng(), [endNode.lat, endNode.lon]], {color: 'white', weight: 1, opacity: 0.7, dashArray: '5, 5'})
+            ]).addTo(map);
+
+            updateStatus(`Calculating route... (exploring ${graph.size.toLocaleString()} nodes)`);
+            
+            return new Promise((resolve, reject) => {
+                const workerBlob = new Blob([document.getElementById('worker').textContent], { type: 'application/javascript' });
+                aStarWorker = new Worker(URL.createObjectURL(workerBlob));
+                
+                aStarWorker.onmessage = async (e) => {
+                    const { type, payload } = e.data;
+                    if (type === 'done') {
+                        animationLog = payload.log; 
+                        updateStatus("Route found! Preparing animation...");
+                        await playAnimation(animationLog);
+                        drawFinalPath(payload.finalPath, routingMode, graph);
+                        updateStatus("Visualization complete!");
+                        resolve();
+                    } else if (type === 'error') {
+                        reject(new PathNotFoundError(payload));
+                    }
+                };
+                
+                aStarWorker.onerror = (e) => reject(new Error(`Error in A* Worker: ${e.message}`));
+
+                const graphData = Array.from(graph.entries()).map(([id, node]) => [id, { ...node, parent: null }]);
+                aStarWorker.postMessage({ graphData, startNodeId: startNode.id, endNodeId: endNode.id, mode: routingMode, MAX_SPEED_MS });
+            });
+        }
+
+        async function handleFindRoute() {
+            if(isReplaying) return;
+            cleanupMap();
+            setLoading(true);
+            routeInfoPanel.classList.add('hidden');
+            animationLog = [];
+            lastFinalPathCoords = [];
+            
+            try {
+                const routingMode = document.querySelector('input[name="routingMode"]:checked').value;
+                updateStatus(`Geocoding addresses...`);
+                const startCoords = await geocodeAddress(startAddressInput.value);
+                const endCoords = await geocodeAddress(endAddressInput.value);
+                
+                if (startMarker) map.removeLayer(startMarker);
+                if (endMarker) map.removeLayer(endMarker);
+                startMarker = L.marker([startCoords.lat, startCoords.lon]).addTo(map).bindPopup("Start");
+                endMarker = L.marker([endCoords.lat, endCoords.lon]).addTo(map).bindPopup("End");
+
+                const directDistance = haversineDistance(startCoords, endCoords) / 1000;
+
+                try {
+                    const initialPadding = directDistance > 75 ? 0.1 : 0.2;
+                    await findRouteAttempt(initialPadding, startCoords, endCoords, routingMode);
+                } catch (error) {
+                    if (error instanceof PathNotFoundError) {
+                        console.warn("Initial attempt failed:", error.message, "Retrying with larger bounding box.");
+                        updateStatus("Could not find route. Retrying with a larger map area...");
+                        const retryPadding = directDistance > 75 ? 0.4 : 0.5;
+                        await findRouteAttempt(retryPadding, startCoords, endCoords, routingMode);
+                    } else {
+                        throw error;
+                    }
+                }
+
+                setLoading(false);
+                replayBtn.classList.remove('hidden');
+                if (aStarWorker) { aStarWorker.terminate(); aStarWorker = null; }
+
+            } catch (error) {
+                console.error(error);
+                updateStatus(`Error: ${error.message}`, true);
+                setLoading(false);
+                if (aStarWorker) { aStarWorker.terminate(); aStarWorker = null; }
+            }
+        }
+
+        async function handleReplay() {
+            if(isReplaying || animationLog.length === 0) return;
+            isReplaying = true;
+            
+            updateStatus("Replaying search...");
+            findRouteBtn.disabled = true;
+            replayBtn.disabled = true;
+
+            await playAnimation(animationLog);
+
+            if (lastFinalPathCoords.length > 0) {
+                finalPathLayer = L.polyline(lastFinalPathCoords, { color: '#facc15', weight: 6, opacity: 1, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+            }
+            
+            updateStatus("Replay complete!");
+            isReplaying = false;
+            findRouteBtn.disabled = false;
+            replayBtn.disabled = false;
+        }
+
+        cancelBtn.addEventListener('click', () => {
+            if (aStarWorker) { aStarWorker.terminate(); aStarWorker = null; }
+            setLoading(false);
+            replayBtn.classList.add('hidden');
+            updateStatus("Search cancelled. Ready for new route.");
+        });
+
+        findRouteBtn.addEventListener('click', handleFindRoute);
+        replayBtn.addEventListener('click', handleReplay);
+        initMap();
+    });
+    </script>
+</body>
+</html>
