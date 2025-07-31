@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const findRouteBtn = document.getElementById('findRouteBtn');
     const cancelBtn = document.getElementById('cancelBtn');
     const replayBtn = document.getElementById('replayBtn');
+    const cancelReplayBtn = document.getElementById('cancelReplayBtn');
     const statusPanel = document.getElementById('statusPanel');
     const routeInfoPanel = document.getElementById('route-info');
     const primaryMetricLabel = document.getElementById('primary-metric-label');
@@ -694,10 +695,19 @@ document.addEventListener('DOMContentLoaded', () => {
             clearInterval(activeAnimationInterval);
             activeAnimationInterval = null;
         }
+        
+        isReplaying = false;
+        findRouteBtn.disabled = false;
+        replayBtn.disabled = false;
+        replayBtn.classList.remove('hidden');
+        cancelReplayBtn.classList.add('hidden');
     }
 
     async function playAnimation(log) {
-        stopAnimation(); 
+        if (activeAnimationInterval) {
+            clearInterval(activeAnimationInterval);
+        }
+        activeAnimationInterval = null;
         cleanupMap(false);
 
         // Check if animation log is empty
@@ -944,7 +954,8 @@ document.addEventListener('DOMContentLoaded', () => {
         
         updateStatus("Replaying search...");
         findRouteBtn.disabled = true;
-        replayBtn.disabled = true;
+        replayBtn.classList.add('hidden');
+        cancelReplayBtn.classList.remove('hidden');
 
         try {
             await playAnimation(animationLog);
@@ -970,7 +981,29 @@ document.addEventListener('DOMContentLoaded', () => {
             isReplaying = false;
             findRouteBtn.disabled = false;
             replayBtn.disabled = false;
+            replayBtn.classList.remove('hidden');
+            cancelReplayBtn.classList.add('hidden');
         }
+    }
+
+    function handleCancelReplay() {
+        console.log("Replay cancelled by user.");
+        stopAnimation();
+        cleanupMap(false); 
+        
+        // Redraw the final path if it exists
+        if (lastFinalPathCoords.length > 0) {
+            if (finalPathLayer) map.removeLayer(finalPathLayer);
+            finalPathLayer = L.polyline(lastFinalPathCoords, { 
+                color: '#facc15', 
+                weight: 6, 
+                opacity: 1, 
+                lineCap: 'round', 
+                lineJoin: 'round' 
+            }).addTo(map);
+        }
+
+        updateStatus("Replay cancelled. Ready for new route.");
     }
 
         cancelBtn.addEventListener('click', () => {
@@ -1058,5 +1091,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     findRouteBtn.addEventListener('click', handleFindRoute);
     replayBtn.addEventListener('click', handleReplay);
+    cancelReplayBtn.addEventListener('click', handleCancelReplay);
     initMap();
 });
