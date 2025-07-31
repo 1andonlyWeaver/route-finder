@@ -776,11 +776,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const minDelay = 8;
         const maxDelay = 200;
-        const delay = Math.round(minDelay + ((maxDelay - minDelay) * (10 - speedValue) / 9));
+        const normSpeed = (speedValue - 1) / 9; // Normalized slider value 0-1
+        const delay = Math.round(maxDelay * Math.pow(minDelay / maxDelay, normSpeed));
 
         const minSegmentsPerTick = 5;
         const maxSegmentsPerTick = Math.max(500, Math.ceil(allSegments.length / 10)); 
-        const segmentsPerTick = Math.round(minSegmentsPerTick + ((maxSegmentsPerTick - minSegmentsPerTick) * (speedValue - 1) / 9));
+        const segmentsPerTick = Math.round(minSegmentsPerTick * Math.pow(maxSegmentsPerTick / minSegmentsPerTick, normSpeed));
 
         let currentIndex = 0;
 
