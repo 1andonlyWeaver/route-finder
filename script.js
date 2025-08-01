@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
         "https://overpass.kumi.systems/api/interpreter",
         "https://overpass.openstreetmap.ru/cgi/interpreter"
     ];
-    const GRID_DIM = 2;
+    
 
     // --- Cache Configuration ---
     const CACHE_CONFIG = {
@@ -425,7 +425,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return coords;
     }
 
-    async function getRoadNetworkTiled(bounds, startCoords, endCoords) {
+    async function getRoadNetworkTiled(bounds, startCoords, endCoords, gridDim) {
         // Check route-based cache first
         const routeCached = cacheManager.getCachedMapDataByRoute(startCoords, endCoords);
         if (routeCached) {
@@ -443,14 +443,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const mergedElements = new Map();
-        const totalTiles = GRID_DIM * GRID_DIM;
+        const totalTiles = gridDim * gridDim;
         let currentTile = 1;
 
-        const latStep = (bounds.getNorth() - bounds.getSouth()) / GRID_DIM;
-        const lonStep = (bounds.getEast() - bounds.getWest()) / GRID_DIM;
+        const latStep = (bounds.getNorth() - bounds.getSouth()) / gridDim;
+        const lonStep = (bounds.getEast() - bounds.getWest()) / gridDim;
 
-        for (let i = 0; i < GRID_DIM; i++) {
-            for (let j = 0; j < GRID_DIM; j++) {
+        for (let i = 0; i < gridDim; i++) {
+            for (let j = 0; j < gridDim; j++) {
                 const south = bounds.getSouth() + i * latStep;
                 const north = south + latStep;
                 const west = bounds.getWest() + j * lonStep;
@@ -877,7 +877,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    async function findRouteAttempt(padding, startCoords, endCoords, routingMode) {
+    async function findRouteAttempt(padding, startCoords, endCoords, routingMode, gridDim) {
         const initialBounds = L.latLngBounds([startCoords.lat, startCoords.lon], [endCoords.lat, endCoords.lon]);
         const center = initialBounds.getCenter();
         const latSpan = initialBounds.getNorth() - initialBounds.getSouth();
@@ -898,7 +898,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (error instanceof OverpassError) {
                 console.warn("Single request failed, falling back to tiled fetching.");
                 updateStatus("Initial request failed. Splitting area into smaller tiles...");
-                osmData = await getRoadNetworkTiled(bounds, startCoords, endCoords);
+                osmData = await getRoadNetworkTiled(bounds, startCoords, endCoords, gridDim);
             } else {
                 throw error;
             }
@@ -975,18 +975,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const directDistance = haversineDistance(startCoords, endCoords) / 1000;
 
-            try {
-                const initialPadding = directDistance > 75 ? 0.1 : 0.2;
-                await findRouteAttempt(initialPadding, startCoords, endCoords, routingMode);
-            } catch (error) {
-                if (error instanceof PathNotFoundError) {
-                    console.warn("Initial attempt failed:", error.message, "Retrying with larger bounding box.");
-                    updateStatus("Could not find route. Retrying with a larger map area...");
-                    const retryPadding = directDistance > 75 ? 0.4 : 0.5;
-                    await findRouteAttempt(retryPadding, startCoords, endCoords, routingMode);
-                } else {
-                    throw error;
+            let retries = 0;
+            const maxRetries = 4; 
+            let gridDim = 2; 
+            let lastError = null;
+
+            while (retries <= maxRetries) {
+                try {
+                    const padding = directDistance > 75 ? 0.1 + (retries * 0.1) : 0.2 + (retries * 0.2);
+                    await findRouteAttempt(padding, startCoords, endCoords, routingMode, gridDim);
+                    lastError = null; 
+                    break;
+                } catch (error) {
+                    lastError = error;
+                    if (error instanceof PathNotFoundError) {
+                        retries++;
+                        gridDim *= 2; 
+                        console.warn(`Path not found, attempt #${retries}. Increasing grid to ${gridDim}x${gridDim}.`);
+                        updateStatus(`Could not find a route. Increasing map detail and retrying (${retries}/${maxRetries})...`);
+                        if (retries > maxRetries) {
+                            console.error("Maximum retries reached. Aborting.");
+                            throw new Error(`Failed to find a route after ${maxRetries} attempts. The area may be too complex or lack road data.`);
+                        }
+                    } else {
+                        
+                        throw error;
+                    }
                 }
+            }
+
+            if (lastError) {
+                throw lastError;
             }
 
             setLoading(false);
